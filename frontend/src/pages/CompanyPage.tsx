@@ -20,6 +20,7 @@ import { isCurrencyChange } from '../utils/currencyChange';
 import { buildSeriesPreview, gstr1SeriesFormatError } from '../utils/seriesPreview';
 import { purchaseTdsSetting } from '../utils/tds';
 import { companyIdentityErrors, firstIdentityErrorField, type CompanyIdentityErrors } from '../utils/companyFieldErrors';
+import { GSTIN_LENGTH, gstinError, normalizeGstinInput } from '../utils/gstin';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -787,7 +788,9 @@ export default function CompanyPage() {
   const [initialSetupRequired, setInitialSetupRequired] = useState<boolean | null>(null);
   // GSTIN / PAN / TAN messages from a failed save, shown under each input.
   const [identityErrors, setIdentityErrors] = useState<CompanyIdentityErrors>({});
-  const gstError = identityErrors.gst ?? '';
+  const [gstTouched, setGstTouched] = useState(false);
+  const invalidGst = gstinError(form.gst);
+  const gstError = identityErrors.gst ?? (gstTouched || form.gst.length >= GSTIN_LENGTH ? invalidGst : null);
   const [showFirstSetupPrompt, setShowFirstSetupPrompt] = useState(false);
   // No "Complete company setup" popup any more: it was one more click between a
   // new user and the form, and read as homework. The short form says it instead.
@@ -876,6 +879,15 @@ export default function CompanyPage() {
     }
   }
 
+  function checkGstinBeforeSave() {
+    if (invalidGst) {
+      setGstTouched(true);
+      gstInputRef.current?.focus();
+      gstInputRef.current?.scrollIntoView({ block: 'center' });
+    }
+    return invalidGst;
+  }
+
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -886,6 +898,10 @@ export default function CompanyPage() {
     if (firstMissing) {
       firstMissing.focus();
       firstMissing.scrollIntoView({ block: 'center' });
+      return;
+    }
+    if (checkGstinBeforeSave()) {
+      pendingNavRef.current = null;
       return;
     }
 
@@ -910,7 +926,7 @@ export default function CompanyPage() {
       const payload: CompanyProfileUpdate = {
         name: form.name.trim(),
         address: form.address.trim(),
-        gst: form.gst.trim().toUpperCase(),
+        gst: normalizeGstinInput(form.gst),
         pan: (form.pan || '').trim().toUpperCase(),
         tan: (form.tan || '').trim().toUpperCase(),
         // Never send the setting on without a TAN: the server refuses that save.
@@ -984,10 +1000,13 @@ export default function CompanyPage() {
   }
 
   async function handleAdditionalInfoSave(value: string) {
+    const gstMessage = checkGstinBeforeSave();
+    if (gstMessage) throw new Error(gstMessage);
     setAdditionalSaving(true);
     try {
       const payload: CompanyProfileUpdate = {
         ...form,
+        gst: normalizeGstinInput(form.gst),
         additional_company_info: value,
       };
       await api.put('/company/', payload);
@@ -1194,9 +1213,11 @@ export default function CompanyPage() {
                     className="input"
                     value={form.gst}
                     onChange={(event) => {
+                      const gst = normalizeGstinInput(event.target.value);
                       setIdentityErrors((current) => ({ ...current, gst: undefined }));
-                      setForm((current) => ({ ...current, gst: event.target.value }));
+                      setForm((current) => ({ ...current, gst }));
                     }}
+                    onBlur={() => setGstTouched(true)}
                     autoCapitalize="characters"
                     aria-invalid={gstError ? true : undefined}
                     aria-describedby={gstError ? 'company-gst-error' : undefined}
